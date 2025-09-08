@@ -1,189 +1,215 @@
 package com.example.flightService.service;
 
-import com.example.flight.grpc.*;
-import com.example.flightService.exception.NoFlightsFoundException;
-import com.example.flightService.mapper.FlightMapper;
+import com.example.flightService.exception.DuplicateFlightException;
 import com.example.flightService.model.FlightEntity;
-import com.google.protobuf.Empty;
-import com.google.protobuf.Timestamp;
+import com.example.flightService.model.ScheduleEntity;
+import com.example.flightService.dto.FlightSearchRequest;
+import com.example.flightService.mapper.FlightMapper;
+import com.example.flightService.repository.ScheduleRepository;
+//import com.example.flightService.exception.DuplicateFlightException;
+import com.example.flight.v1.grpc.*;
+import com.example.flightService.util.DateUtils;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import net.devh.boot.grpc.server.service.GrpcService;
-import org.springframework.beans.factory.annotation.Autowired;
-import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 
-import java.time.Instant;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
+import java.util.Date;
 import java.util.List;
-import java.util.UUID;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 @GrpcService
 public class FlightGrpcService extends FlightServiceGrpc.FlightServiceImplBase {
-    private static final Logger logger = LoggerFactory.getLogger(FlightGrpcService.class);
-    private final FlightService flightService;
+
+    private static final Logger log = LoggerFactory.getLogger(FlightGrpcService.class);
 
     @Autowired
-    public FlightGrpcService(FlightService flightService) {
-        this.flightService = flightService;
-    }
+    private FlightService flightService;
+
+    @Autowired
+    private FlightMapper flightMapper;
+
+    @Autowired
+    private ScheduleRepository scheduleRepository;
 
     @Override
     public void searchFlights(SearchFlightsRequest request, StreamObserver<SearchFlightsResponse> responseObserver) {
+        log.info("gRPC SearchFlights called with source: {}, destination: {}, dayOfWeek: {}",
+                request.getSourceName(), request.getDestinationName(), request.getDepartureDate());
+
         try {
-            String source = request.getSourceName();
-            String destination = request.getDestinationName();
-            String departureDate = request.getDepartureDate();
+            FlightSearchRequest searchRequest = new FlightSearchRequest(
+                request.getSourceName(),
+                request.getDestinationName(),
+                request.getDepartureDate()
+            );
 
-            logger.info("Searching flights with source: {}, destination: {}, departureDate: {}",
-                       source, destination, departureDate);
+            List<FlightEntity> flights = flightService.searchFlights(searchRequest);
 
-            List<FlightEntity> flightEntities = flightService.searchFlight(source, destination, departureDate);
-
-            List<Flight> protoFlights = flightEntities.stream()
-                    .map(FlightMapper::toProto)
-                    .toList();
+            List<Flight> grpcFlights = flights.stream()
+                    .map(flightMapper::toGrpcFlight)
+                    .collect(Collectors.toList());
 
             SearchFlightsResponse response = SearchFlightsResponse.newBuilder()
-                    .addAllFlights(protoFlights)
+                    .addAllFlights(grpcFlights)
                     .build();
 
             responseObserver.onNext(response);
             responseObserver.onCompleted();
 
-        } catch (NoFlightsFoundException e) {
-            logger.warn("No flights found: {}", e.getMessage());
-            responseObserver.onError(
-                Status.NOT_FOUND
-                    .withDescription(e.getMessage())
-                    .asRuntimeException()
-            );
+            log.info("SearchFlights completed successfully, found {} flights", grpcFlights.size());
+
         } catch (Exception e) {
-            logger.error("Error while searching flights", e);
-            responseObserver.onError(
-                Status.INTERNAL
+            log.error("Error in SearchFlights: {}", e.getMessage(), e);
+            responseObserver.onError(io.grpc.Status.INTERNAL
                     .withDescription("Internal server error while searching flights")
-                    .asRuntimeException()
-            );
+                    .withCause(e)
+                    .asRuntimeException());
         }
     }
 
     @Override
     public void getFlightDetails(GetFlightDetailsRequest request, StreamObserver<GetFlightDetailsResponse> responseObserver) {
+        log.info("gRPC GetFlightDetails called for flight ID: {} and day: {}",
+                request.getScheduleId(), request.getDepartureDate());
+
         try {
-            UUID flightId = UUID.fromString(request.getFlightId());
-            FlightEntity flightEntity = flightService.getFlightDetails(flightId)
-                    .orElseThrow(() -> new EntityNotFoundException("Flight not found with id: " + flightId));
+            String scheduleId = request.getScheduleId();
+            //Integer dayOfWeek = request.getDayOfWeek() != 0 ? request.getDayOfWeek() : null;
 
-            GetFlightDetailsResponse response = GetFlightDetailsResponse.newBuilder()
-                    .setFlight(FlightMapper.toProto(flightEntity))
-                    .build();
+            Optional<FlightEntity> flightOpt = flightService.getFlightDetailsByScheduleId(scheduleId);
 
-            responseObserver.onNext(response);
+            if (flightOpt.isPresent()) {
+                FlightEntity flight = flightOpt.get();
+
+                int totalAvailableSeats = scheduleRepository.findById(scheduleId)
+                        .map(ScheduleEntity::getAvailableSeats)
+                        .orElse(0);
+
+                if (totalAvailableSeats <= 0) {
+                    GetFlightDetailsResponse response = GetFlightDetailsResponse.newBuilder()
+                            .setMessage("seat full")
+                            .build();
+                    responseObserver.onNext(response);
+                } else {
+                    Flight grpcFlight = flightMapper.toGrpcFlight(flight);
+                    GetFlightDetailsResponse response = GetFlightDetailsResponse.newBuilder()
+                            .setFlight(grpcFlight)
+                            .build();
+                    responseObserver.onNext(response);
+                }
+            } else {
+                String message = "Flight not found or no schedule available for the requested day" ;
+
+                GetFlightDetailsResponse response = GetFlightDetailsResponse.newBuilder()
+                        .setMessage(message)
+                        .build();
+                responseObserver.onNext(response);
+            }
             responseObserver.onCompleted();
-        } catch (IllegalArgumentException e) {
-            responseObserver.onError(Status.INVALID_ARGUMENT
-                    .withDescription("Invalid flight ID format")
-                    .asRuntimeException());
-        } catch (EntityNotFoundException e) {
-            responseObserver.onError(Status.NOT_FOUND
-                    .withDescription(e.getMessage())
-                    .asRuntimeException());
+
         } catch (Exception e) {
+            log.error("Error in GetFlightDetails: {}", e.getMessage(), e);
             responseObserver.onError(Status.INTERNAL
-                    .withDescription("Error getting flight details: " + e.getMessage())
+                    .withDescription("Internal server error: " + e.getMessage())
                     .asRuntimeException());
         }
     }
 
     @Override
     public void createFlight(CreateFlightRequest request, StreamObserver<CreateFlightResponse> responseObserver) {
-        try {
-            FlightEntity flightEntity = FlightMapper.toEntity(request.getFlight());
-            FlightEntity createdFlight = flightService.createFlight(flightEntity);
+        log.info("gRPC CreateFlight called for flight: {}", request.getFlight().getFlightName());
 
+        try {
+            FlightEntity flightEntity = flightMapper.fromGrpcFlight(request.getFlight());
+            FlightEntity savedFlight = flightService.createFlight(flightEntity);
+
+            Flight grpcFlight = flightMapper.toGrpcFlight(savedFlight);
             CreateFlightResponse response = CreateFlightResponse.newBuilder()
-                    .setFlight(FlightMapper.toProto(createdFlight))
+                    .setFlight(grpcFlight)
                     .build();
 
             responseObserver.onNext(response);
             responseObserver.onCompleted();
+
+            log.info("CreateFlight completed successfully for flight: {}", savedFlight.getFlightName());
+
+        } catch (DuplicateFlightException e) {
+            log.warn("Duplicate flight name detected: {}", e.getMessage());
+            responseObserver.onError(Status.ALREADY_EXISTS
+                    .withDescription("Flight already exists: " + e.getMessage())
+                    .asRuntimeException());
         } catch (Exception e) {
-            responseObserver.onError(Status.INTERNAL
+            log.error("Error in CreateFlight: {}", e.getMessage(), e);
+            responseObserver.onError(io.grpc.Status.INTERNAL
                     .withDescription("Error creating flight: " + e.getMessage())
+                    .withCause(e)
                     .asRuntimeException());
         }
     }
 
     @Override
-    public void updateFlight(UpdateFlightRequest request, StreamObserver<UpdateFlightResponse> responseObserver) {
+    public void lockSeats(LockSeatsRequest request, StreamObserver<LockSeatsResponse> responseObserver) {
+        log.info("gRPC LockSeats called for schedule: {}, order: {}, seats: {}",
+                request.getScheduleId(), request.getOrderId(), request.getSeatsToLock());
+
         try {
-            UUID flightId = UUID.fromString(request.getFlightId());
-            FlightEntity flightEntity = FlightMapper.toEntity(request.getFlight());
-            flightEntity.setId(flightId);
+            boolean lockResult = flightService.lockSeats(
+                    request.getScheduleId(),  // Now using scheduleId instead of flightId
+                    request.getOrderId(),
+                    request.getSeatsToLock()
+            );
 
-            FlightEntity updatedFlight = flightService.updateFlight(flightId, flightEntity);
-
-            UpdateFlightResponse response = UpdateFlightResponse.newBuilder()
-                    .setFlight(FlightMapper.toProto(updatedFlight))
+            LockSeatsResponse response = LockSeatsResponse.newBuilder()
+                    .setSuccess(lockResult)
+                    .setMessage(lockResult ? "Seats locked successfully" : "Failed to lock seats")
                     .build();
 
             responseObserver.onNext(response);
             responseObserver.onCompleted();
-        } catch (IllegalArgumentException e) {
-            responseObserver.onError(Status.INVALID_ARGUMENT
-                    .withDescription("Invalid flight ID format")
-                    .asRuntimeException());
-        } catch (EntityNotFoundException e) {
-            responseObserver.onError(Status.NOT_FOUND
-                    .withDescription(e.getMessage())
-                    .asRuntimeException());
+
+            log.info("LockSeats completed: {}", lockResult ? "Success" : "Failed");
+
         } catch (Exception e) {
-            responseObserver.onError(Status.INTERNAL
-                    .withDescription("Error updating flight: " + e.getMessage())
+            log.error("Error in LockSeats: {}", e.getMessage(), e);
+            responseObserver.onError(io.grpc.Status.INTERNAL
+                    .withDescription("Error locking seats: " + e.getMessage())
+                    .withCause(e)
                     .asRuntimeException());
         }
     }
 
     @Override
-    public void deleteFlight(DeleteFlightRequest request, StreamObserver<Empty> responseObserver) {
-        try {
-            UUID flightId = UUID.fromString(request.getFlightId());
-            flightService.deleteFlight(flightId);
+    public void updatePaymentStatus(UpdatePaymentStatusRequest request, StreamObserver<UpdatePaymentStatusResponse> responseObserver) {
+        log.info("gRPC UpdatePaymentStatus called for order: {}, status: {}",
+                request.getOrderId(), request.getPaymentStatus());
 
-            responseObserver.onNext(Empty.getDefaultInstance());
+        try {
+            boolean updateResult = flightService.updatePaymentStatus(
+                    request.getOrderId(),
+                    request.getPaymentStatus()
+            );
+
+            UpdatePaymentStatusResponse response = UpdatePaymentStatusResponse.newBuilder()
+                    .setSuccess(updateResult)
+                    .setMessage(updateResult ? "Payment status updated successfully" : "Failed to update payment status")
+                    .build();
+
+            responseObserver.onNext(response);
             responseObserver.onCompleted();
-        } catch (IllegalArgumentException e) {
-            responseObserver.onError(Status.INVALID_ARGUMENT
-                    .withDescription("Invalid flight ID format")
-                    .asRuntimeException());
-        } catch (EntityNotFoundException e) {
-            responseObserver.onError(Status.NOT_FOUND
-                    .withDescription(e.getMessage())
-                    .asRuntimeException());
+
+            log.info("UpdatePaymentStatus completed: {}", updateResult ? "Success" : "Failed");
+
         } catch (Exception e) {
-            responseObserver.onError(Status.INTERNAL
-                    .withDescription("Error deleting flight: " + e.getMessage())
+            log.error("Error in UpdatePaymentStatus: {}", e.getMessage(), e);
+            responseObserver.onError(io.grpc.Status.INTERNAL
+                    .withDescription("Error updating payment status: " + e.getMessage())
+                    .withCause(e)
                     .asRuntimeException());
         }
-    }
-
-    private LocalDate timestampToLocalDate(Timestamp timestamp) {
-        return LocalDateTime.ofInstant(
-            Instant.ofEpochSecond(timestamp.getSeconds(), timestamp.getNanos()),
-            ZoneOffset.UTC
-        ).toLocalDate();
-    }
-
-    private Timestamp localDateTimeToTimestamp(LocalDateTime dateTime) {
-        long epochSeconds = dateTime.toInstant(ZoneOffset.UTC).getEpochSecond();
-        int nanos = dateTime.getNano();
-        return Timestamp.newBuilder()
-                .setSeconds(epochSeconds)
-                .setNanos(nanos)
-                .build();
     }
 }

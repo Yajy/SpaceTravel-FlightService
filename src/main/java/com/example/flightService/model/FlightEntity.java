@@ -5,9 +5,10 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.hibernate.annotations.UuidGenerator;
 
-import java.time.LocalDateTime;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Entity
@@ -17,56 +18,48 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 public class FlightEntity {
-    @Id
-    @UuidGenerator(style = UuidGenerator.Style.AUTO)
-    @Column(name = "id", nullable = false, updatable = false, unique = true)
-    private UUID id;
 
-    @Column(name = "flight_name", nullable = false, length = 100)
+    @Id
+    @Column(name = "flight_id", length = 36)
+    private String flightId;
+
+    @Column(name = "flight_name", unique = true, nullable = false)
     private String flightName;
 
-    @Column(name = "source_name", nullable = false, length = 100)
+    @Column(name = "source_name", nullable = false)
     private String sourceName;
 
-    @Column(name = "destination_name", nullable = false, length = 100)
+    @Column(name = "destination_name", nullable = false)
     private String destinationName;
 
-    @Column(name = "price", nullable = false)
-    private Double price;
+    @Column(name = "price", nullable = false, precision = 10, scale = 2)
+    private BigDecimal price;
 
-    @Column(name = "total_seats", nullable = false)
-    private Integer totalSeats;
-
-    @Column(name = "available_seats")
-    private Integer availableSeats;
-
-    @Column(name = "seat_type", length = 50)
+    @Column(name = "seat_type")
     private String seatType;
 
-    @Column(name = "departure_date")
-    private String departureDate;
-
-    @Column(name = "arrival_date")
-    private String arrivalDate;
-
-    @Column(name = "departure_time")
-    private String departureTime;
-
-    @Column(name = "arrival_time")
-    private String arrivalTime;
-
-    @Column(name = "availability")
-    private String availability;
-
-    @Column(name = "additional_info", length = 500)
+    @Column(name = "additional_info")
     private String additionalInfo;
 
-    @Column(name = "status")
-    private Integer status;
+    @OneToMany(mappedBy = "flight", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @Builder.Default
+    private List<ScheduleEntity> schedules = new ArrayList<>();
 
-    @Column(name = "create_time")
-    private LocalDateTime createTime;
+    @PrePersist
+    public void generateId() {
+        if (this.flightId == null) {
+            this.flightId = UUID.randomUUID().toString();
+        }
+    }
 
-    @Column(name = "update_time")
-    private LocalDateTime updateTime;
+    // Helper methods for managing schedules
+    public void addSchedule(ScheduleEntity schedule) {
+        schedules.add(schedule);
+        schedule.setFlight(this);
+    }
+
+    public void removeSchedule(ScheduleEntity schedule) {
+        schedules.remove(schedule);
+        schedule.setFlight(null);
+    }
 }
