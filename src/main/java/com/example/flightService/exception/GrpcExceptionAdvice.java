@@ -1,30 +1,39 @@
 package com.example.flightService.exception;
 
 import io.grpc.Status;
-import jakarta.persistence.EntityNotFoundException;
+import io.grpc.StatusRuntimeException;
 import net.devh.boot.grpc.server.advice.GrpcAdvice;
 import net.devh.boot.grpc.server.advice.GrpcExceptionHandler;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @GrpcAdvice
 public class GrpcExceptionAdvice {
 
-    @GrpcExceptionHandler(FlightException.class)
-    public Status handleFlightException(FlightException e) {
-        return Status.INVALID_ARGUMENT.withDescription(e.getMessage());
-    }
+    private static final Logger log = LoggerFactory.getLogger(GrpcExceptionAdvice.class);
 
-    @GrpcExceptionHandler(EntityNotFoundException.class)
-    public Status handleNotFoundException(EntityNotFoundException e) {
-        return Status.NOT_FOUND.withDescription(e.getMessage());
+    @GrpcExceptionHandler(FlightException.class)
+    public StatusRuntimeException handleFlightException(FlightException ex) {
+        log.error("Flight exception occurred: {}", ex.getMessage());
+        return Status.INTERNAL
+                .withDescription("Flight service error: " + ex.getMessage())
+                .withCause(ex)
+                .asRuntimeException();
     }
 
     @GrpcExceptionHandler(IllegalArgumentException.class)
-    public Status handleIllegalArgumentException(IllegalArgumentException e) {
-        return Status.INVALID_ARGUMENT.withDescription(e.getMessage());
+    public StatusRuntimeException handleIllegalArgumentException(IllegalArgumentException ex) {
+        log.error("Invalid argument: {}", ex.getMessage());
+        return Status.INVALID_ARGUMENT
+                .withDescription("Invalid request: " + ex.getMessage())
+                .asRuntimeException();
     }
 
     @GrpcExceptionHandler(Exception.class)
-    public Status handleException(Exception e) {
-        return Status.INTERNAL.withDescription("An internal server error occurred: " + e.getMessage());
+    public StatusRuntimeException handleGenericException(Exception ex) {
+        log.error("Unexpected error occurred: {}", ex.getMessage(), ex);
+        return Status.INTERNAL
+                .withDescription("Internal server error")
+                .asRuntimeException();
     }
 }

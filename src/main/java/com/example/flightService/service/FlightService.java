@@ -1,17 +1,26 @@
 package com.example.flightService.service;
 
+import com.example.flightService.dto.FlightSearchRequest;
 import com.example.flightService.model.FlightEntity;
 
-import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 public interface FlightService {
-    List<FlightEntity> searchFlight(String sourceName, String destinationName, String journeyStartDate);
-    Optional<FlightEntity> getFlightDetails(UUID flightId);
+
+    List<FlightEntity> searchFlights(FlightSearchRequest request);
+
+    Optional<FlightEntity> getFlightById(String id);
+
+    Optional<FlightEntity> getFlightByIdWithSchedules(String id);
+
+    Optional<FlightEntity> getFlightByName(String flightName);
+
+    Optional<FlightEntity> getFlightDetailsByScheduleId(String scheduleId);
 
     FlightEntity createFlight(FlightEntity flightEntity);
-    FlightEntity updateFlight(UUID id, FlightEntity flightEntity);
-    void deleteFlight(UUID flightId);
+
+    boolean lockSeats(String scheduleId, String orderId, Integer seatsToLock);
+
+    boolean updatePaymentStatus(String orderId, String paymentStatus);
 }
