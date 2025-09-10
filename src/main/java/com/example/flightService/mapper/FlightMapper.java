@@ -1,5 +1,7 @@
 package com.example.flightService.mapper;
 
+import com.example.flightService.dto.FlightDto;
+import com.example.flightService.dto.ScheduleDto;
 import com.example.flightService.model.FlightEntity;
 import com.example.flightService.model.ScheduleEntity;
 import com.example.flight.v1.grpc.Flight;
@@ -14,7 +16,6 @@ import java.util.stream.Collectors;
 @Component
 public class FlightMapper {
 
-    // Convert FlightEntity with schedules to gRPC Flight
     public Flight toGrpcFlight(FlightEntity flightEntity) {
         if (flightEntity == null) {
             return null;
@@ -29,17 +30,17 @@ public class FlightMapper {
                 .setSeatType(flightEntity.getSeatType() != null ? flightEntity.getSeatType() : "")
                 .setAdditionalInfo(flightEntity.getAdditionalInfo() != null ? flightEntity.getAdditionalInfo() : "");
 
-        // Convert schedules
-        List<Schedule> grpcSchedules = flightEntity.getSchedules().stream()
-                .map(this::toGrpcSchedule)
-                .collect(Collectors.toList());
-
-        flightBuilder.addAllSchedules(grpcSchedules);
+        if (flightEntity.getSchedules() != null) {
+            List<Schedule> grpcSchedules = flightEntity.getSchedules().stream()
+                    .map(this::toGrpcSchedule)
+                    .collect(Collectors.toList());
+            flightBuilder.addAllSchedules(grpcSchedules);
+        }
 
         return flightBuilder.build();
     }
 
-    // Convert ScheduleEntity to gRPC Schedule
+
     public Schedule toGrpcSchedule(ScheduleEntity scheduleEntity) {
         if (scheduleEntity == null) {
             return null;
@@ -56,7 +57,46 @@ public class FlightMapper {
                 .build();
     }
 
-    // Convert gRPC Flight to FlightEntity (for creating flights)
+
+    public Flight toGrpcFlightFromDto(FlightDto flightDto) {
+        if (flightDto == null) {
+            return null;
+        }
+
+        Flight.Builder flightBuilder = Flight.newBuilder()
+                .setFlightId(flightDto.getFlightId() != null ? flightDto.getFlightId() : "")
+                .setFlightName(flightDto.getFlightName() != null ? flightDto.getFlightName() : "")
+                .setSourceName(flightDto.getSourceName() != null ? flightDto.getSourceName() : "")
+                .setDestinationName(flightDto.getDestinationName() != null ? flightDto.getDestinationName() : "")
+                .setPrice(flightDto.getPrice() != null ? flightDto.getPrice().doubleValue() : 0.0)
+                .setSeatType(flightDto.getSeatType() != null ? flightDto.getSeatType() : "")
+                .setAdditionalInfo(flightDto.getAdditionalInfo() != null ? flightDto.getAdditionalInfo() : "");
+
+        if (flightDto.getScheduleList() != null) {
+            List<Schedule> grpcSchedules = flightDto.getScheduleList().stream()
+                    .map(this::toGrpcScheduleFromDto)
+                    .collect(Collectors.toList());
+            flightBuilder.addAllSchedules(grpcSchedules);
+        }
+
+        return flightBuilder.build();
+    }
+
+    public Schedule toGrpcScheduleFromDto(ScheduleDto scheduleDto) {
+        if (scheduleDto == null) {
+            return null;
+        }
+
+        return Schedule.newBuilder()
+                .setScheduleId(scheduleDto.getScheduleId() != null ? scheduleDto.getScheduleId() : "")
+                .setDepartureTime(scheduleDto.getDepartureTime() != null ? scheduleDto.getDepartureTime() : "")
+                .setArrivalTime(scheduleDto.getArrivalTime() != null ? scheduleDto.getArrivalTime() : "")
+                .setAvailableSeats(scheduleDto.getAvailableSeats() != null ? scheduleDto.getAvailableSeats() : 0)
+                .setAvailabilityStatus(scheduleDto.getAvailabilityStatus() != null ?
+                        scheduleDto.getAvailabilityStatus() : "AVAILABLE")
+                .build();
+    }
+
     public FlightEntity fromGrpcFlight(Flight grpcFlight) {
         if (grpcFlight == null) {
             return null;
@@ -81,7 +121,6 @@ public class FlightMapper {
         return flight;
     }
 
-    // Convert gRPC Schedule to ScheduleEntity
     public ScheduleEntity fromGrpcSchedule(Schedule grpcSchedule, FlightEntity flight) {
         if (grpcSchedule == null) {
             return null;
@@ -101,7 +140,7 @@ public class FlightMapper {
         try {
             return LocalTime.parse(timeString);
         } catch (Exception e) {
-            return LocalTime.of(8, 0); // Default time
+            return LocalTime.of(11, 0);
         }
     }
 

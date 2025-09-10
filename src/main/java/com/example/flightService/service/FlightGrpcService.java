@@ -1,5 +1,7 @@
 package com.example.flightService.service;
 
+import com.example.flightService.dto.FlightDto;
+import com.example.flightService.dto.SeatLockingDto;
 import com.example.flightService.exception.DuplicateFlightException;
 import com.example.flightService.model.FlightEntity;
 import com.example.flightService.model.ScheduleEntity;
@@ -20,12 +22,16 @@ import java.time.LocalDate;
 import java.util.Date;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 @GrpcService
 public class FlightGrpcService extends FlightServiceGrpc.FlightServiceImplBase {
 
     private static final Logger log = LoggerFactory.getLogger(FlightGrpcService.class);
+
+    private final Lock seatLock = new ReentrantLock();
 
     @Autowired
     private FlightService flightService;
@@ -74,21 +80,16 @@ public class FlightGrpcService extends FlightServiceGrpc.FlightServiceImplBase {
 
     @Override
     public void getFlightDetails(GetFlightDetailsRequest request, StreamObserver<GetFlightDetailsResponse> responseObserver) {
-        log.info("gRPC GetFlightDetails called for flight ID: {} and day: {}",
-                request.getScheduleId(), request.getDepartureDate());
+        log.info("gRPC GetFlightDetails called for schedule ID: {}",
+                request.getScheduleId());
 
         try {
             String scheduleId = request.getScheduleId();
-            //Integer dayOfWeek = request.getDayOfWeek() != 0 ? request.getDayOfWeek() : null;
+            FlightDto flightDto = flightService.getFlightDetailsByScheduleId(scheduleId);
 
-            Optional<FlightEntity> flightOpt = flightService.getFlightDetailsByScheduleId(scheduleId);
-
-            if (flightOpt.isPresent()) {
-                FlightEntity flight = flightOpt.get();
-
-                int totalAvailableSeats = scheduleRepository.findById(scheduleId)
-                        .map(ScheduleEntity::getAvailableSeats)
-                        .orElse(0);
+            if (flightDto != null) {
+                int totalAvailableSeats = flightDto.getScheduleList().isEmpty() ? 0
+                    : flightDto.getScheduleList().getFirst().getAvailableSeats();
 
                 if (totalAvailableSeats <= 0) {
                     GetFlightDetailsResponse response = GetFlightDetailsResponse.newBuilder()
@@ -96,14 +97,14 @@ public class FlightGrpcService extends FlightServiceGrpc.FlightServiceImplBase {
                             .build();
                     responseObserver.onNext(response);
                 } else {
-                    Flight grpcFlight = flightMapper.toGrpcFlight(flight);
+                    Flight grpcFlight = flightMapper.toGrpcFlightFromDto(flightDto);
                     GetFlightDetailsResponse response = GetFlightDetailsResponse.newBuilder()
                             .setFlight(grpcFlight)
                             .build();
                     responseObserver.onNext(response);
                 }
             } else {
-                String message = "Flight not found or no schedule available for the requested day" ;
+                String message = "Flight not found or no schedule available for the requested schedule ID";
 
                 GetFlightDetailsResponse response = GetFlightDetailsResponse.newBuilder()
                         .setMessage(message)
@@ -158,21 +159,23 @@ public class FlightGrpcService extends FlightServiceGrpc.FlightServiceImplBase {
                 request.getScheduleId(), request.getOrderId(), request.getSeatsToLock());
 
         try {
-            boolean lockResult = flightService.lockSeats(
-                    request.getScheduleId(),  // Now using scheduleId instead of flightId
+            seatLock.lock();
+            SeatLockingDto lockResult = flightService.lockSeats(
+                    request.getScheduleId(),
                     request.getOrderId(),
                     request.getSeatsToLock()
             );
+            seatLock.unlock();
 
             LockSeatsResponse response = LockSeatsResponse.newBuilder()
-                    .setSuccess(lockResult)
-                    .setMessage(lockResult ? "Seats locked successfully" : "Failed to lock seats")
+                    .setSuccess(lockResult.isSeatLocked())
+                    .setMessage(lockResult.getMessage())
                     .build();
 
             responseObserver.onNext(response);
             responseObserver.onCompleted();
 
-            log.info("LockSeats completed: {}", lockResult ? "Success" : "Failed");
+            log.info("LockSeats completed: {}", lockResult.isSeatLocked() ? "Success" : "Failed");
 
         } catch (Exception e) {
             log.error("Error in LockSeats: {}", e.getMessage(), e);
