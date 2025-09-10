@@ -49,7 +49,7 @@ public class TempOrders {
             this.createdAt = LocalDateTime.now();
         }
         if (this.expiresAt == null) {
-            this.expiresAt = this.createdAt.plusMinutes(10); // 10 minutes TTL
+            this.expiresAt = this.createdAt.plusMinutes(10);
         }
         if (this.status == null) {
             this.status = OrderStatus.PENDING;

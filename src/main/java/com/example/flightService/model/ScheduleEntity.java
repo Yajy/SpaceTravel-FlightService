@@ -51,16 +51,17 @@ public class ScheduleEntity {
         }
     }
 
+    // best to use enum in code rather than DB
     public enum AvailabilityStatus {
         AVAILABLE, FULL
     }
 
-    // Helper method to check if schedule is available
+
     public boolean hasAvailableSeats() {
         return availableSeats != null && availableSeats > 0 && availabilityStatus == AvailabilityStatus.AVAILABLE;
     }
 
-    // Helper method to update availability status based on available seats
+
     public void updateAvailabilityStatus() {
         this.availabilityStatus = hasAvailableSeats() ? AvailabilityStatus.AVAILABLE : AvailabilityStatus.FULL;
     }

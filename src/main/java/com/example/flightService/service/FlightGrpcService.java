@@ -2,6 +2,7 @@ package com.example.flightService.service;
 
 import com.example.flightService.dto.FlightDto;
 import com.example.flightService.dto.SeatLockingDto;
+import com.example.flightService.dto.UpdatePaymentStatusDto;
 import com.example.flightService.exception.DuplicateFlightException;
 import com.example.flightService.model.FlightEntity;
 import com.example.flightService.model.ScheduleEntity;
@@ -25,6 +26,8 @@ import java.util.Optional;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
+
+import static java.awt.SystemColor.info;
 
 @GrpcService
 public class FlightGrpcService extends FlightServiceGrpc.FlightServiceImplBase {
@@ -54,9 +57,9 @@ public class FlightGrpcService extends FlightServiceGrpc.FlightServiceImplBase {
                 request.getDepartureDate()
             );
 
-            List<FlightEntity> flights = flightService.searchFlights(searchRequest);
+            List<FlightEntity> flightEntities = flightService.searchFlights(searchRequest);
 
-            List<Flight> grpcFlights = flights.stream()
+            List<Flight> grpcFlights = flightEntities.stream()
                     .map(flightMapper::toGrpcFlight)
                     .collect(Collectors.toList());
 
@@ -167,10 +170,13 @@ public class FlightGrpcService extends FlightServiceGrpc.FlightServiceImplBase {
             );
             seatLock.unlock();
 
+            log.info("Seat lock response from dto is : {}", lockResult.isSeatLocked());
+
             LockSeatsResponse response = LockSeatsResponse.newBuilder()
                     .setSuccess(lockResult.isSeatLocked())
                     .setMessage(lockResult.getMessage())
                     .build();
+
 
             responseObserver.onNext(response);
             responseObserver.onCompleted();
@@ -192,20 +198,20 @@ public class FlightGrpcService extends FlightServiceGrpc.FlightServiceImplBase {
                 request.getOrderId(), request.getPaymentStatus());
 
         try {
-            boolean updateResult = flightService.updatePaymentStatus(
+            UpdatePaymentStatusDto updateResult = flightService.updatePaymentStatus(
                     request.getOrderId(),
                     request.getPaymentStatus()
             );
 
             UpdatePaymentStatusResponse response = UpdatePaymentStatusResponse.newBuilder()
-                    .setSuccess(updateResult)
-                    .setMessage(updateResult ? "Payment status updated successfully" : "Failed to update payment status")
+                    .setSuccess(updateResult.isSuccess())
+                    .setMessage(updateResult.getMessage())
                     .build();
 
             responseObserver.onNext(response);
             responseObserver.onCompleted();
 
-            log.info("UpdatePaymentStatus completed: {}", updateResult ? "Success" : "Failed");
+            log.info(updateResult.getMessage());
 
         } catch (Exception e) {
             log.error("Error in UpdatePaymentStatus: {}", e.getMessage(), e);

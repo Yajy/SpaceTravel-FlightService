@@ -44,7 +44,6 @@ public class TempOrderCleanupService {
 
             for (TempOrders expiredOrder : expiredOrders) {
                 try {
-                    // Restore seats to the schedule
                     Optional<ScheduleEntity> scheduleOpt = scheduleRepository.findById(expiredOrder.getScheduleId());
                     if (scheduleOpt.isPresent()) {
                         ScheduleEntity schedule = scheduleOpt.get();
@@ -60,8 +59,6 @@ public class TempOrderCleanupService {
                                 expiredOrder.getScheduleId(),
                                 expiredOrder.getOrderId());
                     }
-
-                    // Mark order as expired
                     expiredOrder.setStatus(TempOrders.OrderStatus.EXPIRED);
                     tempOrderRepository.save(expiredOrder);
 

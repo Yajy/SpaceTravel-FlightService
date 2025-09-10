@@ -18,7 +18,7 @@ public interface FlightRepository extends JpaRepository<FlightEntity, String> {
 
     Optional<FlightEntity> findByFlightName(String flightName);
 
-    @Query("SELECT f FROM FlightEntity f JOIN FETCH f.schedules s WHERE f.sourceName = :sourceName AND f.destinationName = :destinationName AND s.dayOfWeek = :dayOfWeek")
+    @Query("SELECT f FROM FlightEntity f JOIN FETCH f.schedules s WHERE f.sourceName = :sourceName AND f.destinationName = :destinationName AND s.dayOfWeek = :dayOfWeek AND s.availableSeats > 0")
     List<FlightEntity> findBySourceDestinationAndDay(@Param("sourceName") String sourceName,
                                                      @Param("destinationName") String destinationName,
                                                      @Param("dayOfWeek") Integer dayOfWeek);

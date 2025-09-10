@@ -1,9 +1,6 @@
 package com.example.flightService.service;
 
-import com.example.flightService.dto.FlightDto;
-import com.example.flightService.dto.FlightSearchRequest;
-import com.example.flightService.dto.ScheduleDto;
-import com.example.flightService.dto.SeatLockingDto;
+import com.example.flightService.dto.*;
 import com.example.flightService.exception.DuplicateFlightException;
 import com.example.flightService.model.FlightEntity;
 import com.example.flightService.model.ScheduleEntity;
@@ -49,19 +46,19 @@ public class FlightServiceImpl implements FlightService {
                 request.getSourceName(), request.getDestinationName(), request.getDepartureDate());
 
         LocalDate searchDate = null;
-        Integer dayOfWeek = null;
+        Integer dayOfWeekInteger = null;
 
         if(request.getDepartureDate() != null && !request.getDepartureDate().trim().isEmpty()) {
             searchDate = dateUtils.parseDate(request.getDepartureDate());
-            dayOfWeek = dateUtils.convertDateToDayOfWeek(searchDate);
-            log.info("Converted dayOfWeek: {}", dayOfWeek);
+            dayOfWeekInteger = dateUtils.convertDateToDayOfWeek(searchDate);
+            log.info("Converted dayOfWeek: {}", dayOfWeekInteger);
         }
 
         List<FlightEntity> flights;
         
-        if (dayOfWeek != null) {
+        if (dayOfWeekInteger != null) {
             flights = flightRepository.findBySourceDestinationAndDay(
-                request.getSourceName(), request.getDestinationName(), dayOfWeek);
+                request.getSourceName(), request.getDestinationName(), dayOfWeekInteger);
         } else {
             flights = flightRepository.findBySourceAndDestination(
                 request.getSourceName(), request.getDestinationName());
@@ -104,6 +101,10 @@ public class FlightServiceImpl implements FlightService {
 
     private void validateFlightData(FlightEntity flight) {
         log.info("Validating flight data for: {}", flight.getFlightName());
+
+        if (flight.getSchedules()== null || flight.getSchedules().isEmpty()) {
+            throw new IllegalArgumentException("Schedule cannot be empty");
+        }
 
         if (flight.getFlightName() == null || flight.getFlightName().trim().isEmpty()) {
             throw new IllegalArgumentException("Flight name cannot be null or empty");
@@ -164,27 +165,23 @@ public class FlightServiceImpl implements FlightService {
     public SeatLockingDto lockSeats(String scheduleId, String orderId, Integer seatsToLock) {
         log.info("Locking {} seats for schedule {} and order {}", seatsToLock, scheduleId, orderId);
 
-        String message = "";
-        boolean seatLocked = false;
-
         try {
-            Optional<TempOrders> existingOrder = tempOrderRepository.findByOrderIdAndStatus(orderId, TempOrders.OrderStatus.PENDING);
-            if (existingOrder.isPresent()) {
+            if (tempOrderRepository.findByOrderIdAndStatus(orderId, TempOrders.OrderStatus.PENDING).isPresent()) {
                 log.warn("Order {} already has pending seat lock", orderId);
-                message= "Seats Already locked for this order!";
+                return buildResponse(false, "Seats already locked for this order!");
             }
 
             Optional<ScheduleEntity> scheduleOpt = scheduleRepository.findById(scheduleId);
             if (scheduleOpt.isEmpty()) {
                 log.error("Schedule not found: {}", scheduleId);
-                message= "Schedule not found "+ scheduleId;
+                return buildResponse(false, "Schedule not found: " + scheduleId);
             }
 
             ScheduleEntity schedule = scheduleOpt.get();
+
             if (schedule.getAvailableSeats() < seatsToLock) {
-                log.error("Not enough seats available. Requested: {}, Available: {}", 
-                         seatsToLock, schedule.getAvailableSeats());
-                message= "Not enough seats available: "+ seatsToLock+" Available: " + schedule.getAvailableSeats();
+                log.error("Not enough seats. Requested: {}, Available: {}", seatsToLock, schedule.getAvailableSeats());
+                return buildResponse(false, "Not enough seats. Requested: " + seatsToLock + ", Available: " + schedule.getAvailableSeats());
             }
 
             TempOrders tempOrder = TempOrders.builder()
@@ -194,57 +191,56 @@ public class FlightServiceImpl implements FlightService {
                     .status(TempOrders.OrderStatus.PENDING)
                     .build();
 
-            tempOrderRepository.save(tempOrder);
-
             schedule.setAvailableSeats(schedule.getAvailableSeats() - seatsToLock);
             scheduleRepository.save(schedule);
+            tempOrderRepository.save(tempOrder);
+
+            log.info("Seats locked successfully for order {}", orderId);
+            return buildResponse(true, "Seats locked successfully");
+
         } catch (Exception e) {
             log.error("Failed to lock seats: {}", e.getMessage(), e);
-            message = "Failed to lock seats: " + e.getMessage();
+            return buildResponse(false, "Failed to lock seats: " + e.getMessage());
         }
-        if(message.isEmpty()) {
-            seatLocked = true;
-            message = "Seats locked successfully";
-            log.info("Seats locked successfully for order {}", orderId);
-        } else {
-            log.warn("Seat locking failed for order {}: {}", orderId, message);
-        }
+    }
+
+    private SeatLockingDto buildResponse(boolean seatLocked, String message) {
         return SeatLockingDto.builder()
                 .seatLocked(seatLocked)
                 .message(message)
                 .build();
     }
 
+
     @Override
-    public boolean updatePaymentStatus(String orderId, String paymentStatus) {
+    public UpdatePaymentStatusDto updatePaymentStatus(String orderId, boolean paymentStatus) {
         log.info("Processing payment status update for order: {}, status: {}", orderId, paymentStatus);
+        UpdatePaymentStatusDto updatePaymentStatusDto = new UpdatePaymentStatusDto();
+        String message = "";
+        boolean success = false;
 
         try {
-//            List<TempOrders> allOrdersWithId = tempOrderRepository.findAll().stream()
-//                    .filter(order -> order.getOrderId().equals(orderId))
-//                    .toList();
-//
-//            log.info("Found {} temp orders with orderId {}", allOrdersWithId.size(), orderId);
-//
-//            if (!allOrdersWithId.isEmpty()) {
-//                TempOrders existingOrder = allOrdersWithId.get(0);
-//                log.info("Existing order status: {}, expiresAt: {}, current time: {}",
-//                        existingOrder.getStatus(), existingOrder.getExpiresAt(), LocalDateTime.now());
-//            }
-
             Optional<TempOrders> tempOrderOpt = tempOrderRepository.findByOrderIdAndStatus(orderId, TempOrders.OrderStatus.PENDING);
             if (tempOrderOpt.isEmpty()) {
                 log.warn("No pending temp order found for order ID: {}. Check if order exists with different status or has expired.", orderId);
-                return false;
+                return UpdatePaymentStatusDto.builder()
+                        .success(false)
+                        .message("No pending order found or order expired")
+                        .build();
             }
 
             TempOrders tempOrder = tempOrderOpt.get();
-            boolean paymentSuccess = "SUCCESS".equalsIgnoreCase(paymentStatus);
+            log.info("paymentStatus is : {}", paymentStatus);
 
-            if (paymentSuccess) {
+            if (paymentStatus) {
                 tempOrder.setStatus(TempOrders.OrderStatus.COMPLETED);
                 tempOrderRepository.save(tempOrder);
+
                 log.info("Payment successful for order: {}. Seats permanently reserved.", orderId);
+                return UpdatePaymentStatusDto.builder()
+                        .success(true)
+                        .message("Payment successful, seats reserved")
+                        .build();
             } else {
                 Optional<ScheduleEntity> scheduleOpt = scheduleRepository.findById(tempOrder.getScheduleId());
                 if (scheduleOpt.isPresent()) {
@@ -257,13 +253,18 @@ public class FlightServiceImpl implements FlightService {
 
                 tempOrder.setStatus(TempOrders.OrderStatus.FAILED);
                 tempOrderRepository.save(tempOrder);
-                log.info("Payment failed for order: {}. Seats restored.", orderId);
-            }
 
-            return true;
+                return UpdatePaymentStatusDto.builder()
+                        .success(false)
+                        .message("Payment failed, seats restored")
+                        .build();
+            }
         } catch (Exception e) {
             log.error("Failed to update payment status for order {}: {}", orderId, e.getMessage(), e);
-            return false;
+            return UpdatePaymentStatusDto.builder()
+                    .success(false)
+                    .message("Failed to update payment status: " + e.getMessage())
+                    .build();
         }
     }
 
